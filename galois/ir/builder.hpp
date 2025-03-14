@@ -57,7 +57,7 @@ class Builder : public std::enable_shared_from_this<Builder> {
 
     std::tuple<std::shared_ptr<Grid>, std::unique_ptr<ScopeGuard>> CreateGrid(
         Eigen::VectorXi64 shape) {
-        auto ir_grid = Cast<Grid>(this->Create<Grid>(shape));
+        auto ir_grid = Cast<Grid>(this->Create<Grid>(shape)); 
         this->grid_stack.push(ir_grid);
         this->block_stack.push(ir_grid);
         this->iterator_stack.push(ir_grid->values.end());
@@ -151,11 +151,16 @@ class Builder : public std::enable_shared_from_this<Builder> {
 
     std::shared_ptr<Accessor> CreateIdentityAccessor(std::shared_ptr<Tensor> ir_tensor) {
         auto ir_tensor_type = ir_tensor->type;
+        //Identity 返回一个 rows × cols 的矩阵，主对角线元素全为 1，其余元素全为 0。
         Eigen::MatrixXi64 transform_matrix = Eigen::MatrixXi64::Identity(
-            ir_tensor_type->shape.size(), this->CurrentGrid()->shape.size());
+            ir_tensor_type->shape.size(),  // tensortype中shape的定义：Eigen::VectorXi64 shape,是 Tile->(4,1),则 shape.size()=2;所以transform_matrix大概率是2d单位矩阵
+            this->CurrentGrid()->shape.size());
+
+        // 这里把矩阵的坐标转换成：Ax+b 仿射表达式 形成；其中A为transform_matrix，
         auto ir_accessor = this->Create<Accessor>(
-            ir_tensor, transform_matrix, Eigen::VectorXi64::Zero(ir_tensor_type->shape.size()));
-        ir_accessor->Indices(this->grid_stack.top()->indices);
+            ir_tensor, transform_matrix, 
+            Eigen::VectorXi64::Zero(ir_tensor_type->shape.size())); //Eigen::VectorXi64::Zero(ir_tensor_type->shape.size()) 零向量
+        ir_accessor->Indices(this->grid_stack.top()->indices);// 从grid栈取出grid,使用grid的索引检索
         return ir_accessor;
     }
 

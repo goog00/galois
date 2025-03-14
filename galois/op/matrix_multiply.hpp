@@ -32,16 +32,25 @@ class MatrixMultiplyKernel4x1x4 : public MatrixMultiplyKernel {
 
     void Express(std::shared_ptr<Tensor> ir_mat_a, std::shared_ptr<Tensor> ir_mat_b,
                  std::shared_ptr<Tensor> ir_mat_c, std::shared_ptr<Builder> ir_builder) override {
-        Eigen::VectorXi64 v4(1);
+
+        //在张量框架中，shape 是一个向量，每个元素表示一个维度的长度。一维张量需要一个大小为 1 的向量来描述，值指定长度。     
+        //v4 = [4] 表示创建一个长度为 4 的向量类型（f32[4]），用于后续的 BitCast 和广播操作。
+        //大小为 1 是因为它描述一维张量，而不是二维或更高维。
+        //创建一个大小为 1 的向量 v4，赋值为 [4]，表示长度为 4 的向量形状。
+        Eigen::VectorXi64 v4(1);//
         v4[0] = 4;
         auto ir_f32x4_type = TensorType::Create(FloatType::Create(32), v4);
+
+        // 将数据重解释为向量类型（如 f32[4]），逻辑上重排内存视图。
         auto ir_bit_cast_a = ir_builder->Create<BitCast>(ir_mat_a, ir_f32x4_type);
         auto ir_bit_cast_b = ir_builder->Create<BitCast>(ir_mat_b, ir_f32x4_type);
         auto ir_bit_cast_c =
             ir_builder->Create<BitCast>(ir_mat_c, TensorType::Create(ir_f32x4_type, v4));
 
         for (int64_t i = 0; i < 4; ++i) {
-            auto ir_vector_broadcast_a = ir_builder->Create<VectorBroadcast>(ir_bit_cast_a, i);
+            //VectorBroadcast：将单一值扩展为向量，填充寄存器。
+            auto ir_vector_broadcast_a = ir_builder->Create<VectorBroadcast>(ir_bit_cast_a, i);//
+
             auto ir_mul = ir_builder->Create<Mul>(ir_vector_broadcast_a, ir_bit_cast_b);
             auto ir_accessor_c = ir_builder->CreateAccessor(ir_bit_cast_c);
             ir_accessor_c->shift_vector[0] = i;
@@ -174,16 +183,18 @@ class MatrixMultiplyCreator : public BinaryCreator {
             ir_mat_a->type->shape[0], ir_mat_a->type->shape[1], ir_mat_b->type->shape[1]));
         // std::unique_ptr<ScopeGuard> pthread_block_scope;
         // ir_grid->enable_multi_thread = ir_mat_a->type->enable_multi_thread;
-
+  
+        //typedef Eigen::Matrix<int64_t, -1, -1> MatrixXi64; // 定义类型别名 矩阵元素的数据类型为 64 位整数（长整型）。 -1, -1：矩阵的行数和列数是动态大小（即在运行时决定）。
+        //Eigen::MatrixXi64 transform_matrix;  
         auto ir_accessor_a = ir_builder->CreateAccessor(ir_mat_a);
         ir_accessor_a->transform_matrix(0, 0) = 1;
-        ir_accessor_a->transform_matrix(1, 1) = 1;
+        ir_accessor_a->transform_matrix(1, 1) = 1; //因此，transform_matrix 是一个2D的单位矩阵
         auto ir_accessor_b = ir_builder->CreateAccessor(ir_mat_b);
         ir_accessor_b->transform_matrix(0, 1) = 1;
-        ir_accessor_b->transform_matrix(1, 2) = 1;
+        ir_accessor_b->transform_matrix(1, 2) = 1; // transform_matrix 需要 至少 2 行 3 列 (2 × 3)
         auto ir_accessor_c = ir_builder->CreateAccessor(ir_mat_c);
         ir_accessor_c->transform_matrix(0, 0) = 1;
-        ir_accessor_c->transform_matrix(1, 2) = 1;
+        ir_accessor_c->transform_matrix(1, 2) = 1; //transform_matrix 需要 至少 2 行 3 列 (2 × 3)
 
         this->AffineExpressImpl(ir_accessor_a, ir_accessor_b, ir_accessor_c, ir_builder);
     }

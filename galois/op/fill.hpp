@@ -28,7 +28,11 @@ class FillCreator : public op::Creator {
         if (ir_ts->type->IsScalar()) {
             ir_builder->Create<ir::Write>(ir_value, ir_ts);
         } else {
+
+            //Grid 提供逻辑坐标 (i, j)。
+            //Accessor 使用 transform_matrix 和 shift_vector 计算实际张量偏移。
             auto [ir_grid, scope_guard] = ir_builder->CreateGrid(ir_ts->type->shape);
+            //创建一个 Accessor，初始为单位变换（CreateIdentityAccessor）。
             auto ir_accessor = ir_builder->CreateIdentityAccessor(ir_ts);
             this->AffineExpressImpl(ir_accessor, ir_value, ir_builder);
         }

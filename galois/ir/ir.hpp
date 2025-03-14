@@ -48,9 +48,9 @@ enum struct MemoryType { Host, Stack };
 
 class TensorType : public Named, public std::enable_shared_from_this<TensorType> {
    public:
-    static std::shared_ptr<TensorType> Create(std::shared_ptr<TensorType> value_type,
-                                              Eigen::VectorXi64 shape,
-                                              Layout layout = Layout::RowMajor) {
+    static std::shared_ptr<TensorType> Create(std::shared_ptr<TensorType> value_type,// 张量的数据类型
+                                              Eigen::VectorXi64 shape,// 形状
+                                              Layout layout = Layout::RowMajor) { // 数据布局
         for (auto ir_type : global_context.created_types) {
             if (auto ir_tensor_type = Cast<TensorType>(ir_type)) {
                 if (ir_tensor_type->value_type == value_type &&
@@ -66,16 +66,36 @@ class TensorType : public Named, public std::enable_shared_from_this<TensorType>
         self->shape = shape;
         self->layout = layout;
 
-        if (self->shape.size() == 0) {
+        if (self->shape.size() == 0) {//0 维的张量
             self->name = value_type->name;
             self->bytes = self->value_type->bytes;
         } else {
-            if (layout == Layout::RowMajor) {
+            if (layout == Layout::RowMajor) { // 行优先存储
+
+                //将 self->stride（类型为 Eigen::VectorXi64）的大小调整为 shape 的维度数。shape.size() 返回张量的维度数，例如 [2, 3] 的 size() 是 2。
+                //shape = [2, 3]，则 stride 初始化为大小 2 的向量，内容未定义（可能是垃圾值）。
                 self->stride.resize(shape.size());
+
+                //定义变量 i 并初始化为最后一个维度的索引。shape.size() - 1 是张量维度的最大索引（从 0 开始计数）。
+                //从最内层维度（最后一个维度）开始计算步幅。
+                //shape = [2, 3]，shape.size() = 2，i = 1。
                 auto i = shape.size() - 1;
+
+                //将最内层维度的步幅设置为 1。
+                //在行主存中，最内层维度（列）的元素是连续存储的，因此步幅为 1。这是计算其他维度步幅的起点。
+                //shape = [2, 3]，i = 1，stride[1] = 1（列步幅）。
+                // 此时 stride = [未定义, 1]。
                 self->stride[i] = 1;
+
+                //使用循环从倒数第二个维度（i = shape.size() - 2）向前计算，直到第一个维度（i = 0）。 逐步计算每个维度的步幅，从内向外递推。 i > 0 确保不越界，且第一个维度（i = 0）也在循环中处理。
                 while (i > 0) {
+                    //将索引 i 减 1，移动到前一个维度。 实现从右到左的遍历。
+                    // i的声明 i = shape.size() - 1;
                     i = i - 1;
+
+                    //当前维度的步幅等于下一维度的元素数（shape[i + 1]）乘以下一维度的步幅（self->stride[i + 1]）。
+                    //在行主存中，步幅表示从当前维度的一个元素移动到下一元素时，需要跳过多少个内存位置。下一维度的元素数决定了当前维度的一次完整跨度。
+                    //stride[i] = shape[i + 1] * stride[i + 1] 是行主存步幅的递推公式。 
                     self->stride[i] = shape[i + 1] * self->stride[i + 1];
                 }
             } else {
@@ -106,7 +126,12 @@ class TensorType : public Named, public std::enable_shared_from_this<TensorType>
             return this->value_type->PrimitiveDataType();
         }
     }
-
+//      统一形状表示：
+// 在嵌套张量（如张量中的元素本身是张量）中，NormalizeShape() 提供了一种方法，将外层和内层的形状组合成一个统一的表示。
+// 示例：
+// 外层形状 [2, 3]，值类型形状 [4, 5]，结果 [8, 15] 表示总共 2*4 x 3*5 的元素。
+// 展平嵌套结构：
+// 对于多层嵌套的张量（如张量数组），它可以计算等效的扁平化形状，方便后续操作（如内存分配或索引）。
     Eigen::VectorXi64 NormalizeShape() {
         if (this->IsScalar()) {
             return Eigen::VectorXi64::Ones(0);
@@ -115,7 +140,7 @@ class TensorType : public Named, public std::enable_shared_from_this<TensorType>
             if (this->value_type->IsScalar()) {
                 return this->shape;
             } else {
-                return this->shape.array() * value_type_normalize_shape.array();
+                return this->shape.array() * value_type_normalize_shape.array(); //shape.array() 逐个元素操作
             }
         }
     }
@@ -132,8 +157,9 @@ class TensorType : public Named, public std::enable_shared_from_this<TensorType>
     template <typename... Dims>
     std::shared_ptr<TensorType> Tile(Dims... dims) {
         std::array<int64_t, std::tuple_size<std::tuple<Dims...>>::value> shape_array = {dims...};
-        Eigen::VectorXi64 shape(shape_array.size());
-        std::copy(RANGE(shape_array), shape.begin());
+        //Eigen::VectorXi64 是 Eigen 库中的一个 动态大小的整数向量（等价于 Eigen::Matrix<int64_t, -1, 1>）。
+        Eigen::VectorXi64 shape(shape_array.size()); //shape_array.size()=2
+        std::copy(RANGE(shape_array), shape.begin());//把shape_array的内容复制到shape中；[4,1] copy 到 shape中
         return TensorType::Create(this->shared_from_this(), shape);
     }
 
@@ -155,7 +181,7 @@ class TensorType : public Named, public std::enable_shared_from_this<TensorType>
     Eigen::VectorXi64 shape;
     std::shared_ptr<TensorType> value_type;
     Layout layout = Layout::RowMajor;
-    Eigen::RowVectorXi64 stride;
+    Eigen::RowVectorXi64 stride; //步幅是向量，步幅是张量在内存中每个维度上的元素间隔，用于描述如何从线性内存地址映射到多维张量索引；根据value_type,数据布局layout,张量形状shape 计算得出
     MemoryType memory_type = MemoryType::Host;
     int64_t bytes = 0;
 
@@ -197,13 +223,24 @@ class FloatType : public RealNumberType {
         }
 
         std::shared_ptr<FloatType> self(new FloatType);
+        //表示 FloatType 是一个基本类型（没有嵌套的子类型）。
+        // 在张量框架中，value_type 通常用于表示复合类型（如张量数组）的元素类型。设置为 nullptr 表明这是一个标量类型（如 float32），没有进一步的嵌套。
         self->value_type = nullptr;
+        //将 self 的 shape（类型为 Eigen::VectorXi64）调整为大小为 0。
+        //shape 表示张量的维度信息（如 [2, 3] 表示 2x3 矩阵）。
+        //将 FloatType 的形状设置为空，表明它是一个标量类型。
+        //在 Eigen 中，动态向量的大小为 0 表示没有维度，与标量的概念对应。
+        // 效果：
+        // 调用 self->IsScalar()（假设定义为 shape.size() == 0）将返回 true。
+        // 在 NormalizeShape() 中，这会导致返回空形状 VectorXi64::Ones(0)。
         self->shape.resize(0);
+        // 将 self 的 stride（类型为 Eigen::VectorXi64）调整为大小为 0。
+        // stride 表示张量在内 存中的步幅（每个维度上的元素间隔）。
         self->stride.resize(0);
 
-        self->bits = bits;
-        self->bytes = bits / 8;
-        self->name = "f" + std::to_string(bits);
+        self->bits = bits; //bits 表示浮点数的位数（如 32 表示 float32，64 表示 float64）。
+        self->bytes = bits / 8; //用于内存分配或类型描述。例如，32 位浮点数占用 4 字节，64 位占用 8 字节。
+        self->name = "f" + std::to_string(bits);  //设置 name 为字符串 "f" 加上 bits 的字符串表示。 例如，bits = 32 时，name = "f32"。
         self->fullname = "f" + std::to_string(bits);
         global_context.created_types.push_back(self);
         return self;
@@ -465,6 +502,8 @@ class GridIndexVector : public Tensor {
     }
 };
 
+//Grid 是一个坐标网格，起点固定为 (0, 0)，shape 是地图的大小。
+// Accessor 是探针，根据坐标访问数据。
 class Accessor : public Instruction {
    public:
     static std::shared_ptr<Accessor> Create(std::shared_ptr<Tensor> ir_tensor,
@@ -473,7 +512,9 @@ class Accessor : public Instruction {
         std::shared_ptr<Accessor> self(new Accessor);
         self->OperandResize(2);
         self->Tensor(ir_tensor);
+        //transform_matrix 是仿射变换的线性部分（矩阵A),将逻辑坐标映射到物理坐标。
         self->transform_matrix = transform_matrix;
+        //Accessor 的 shift_vector（例如 {i, j}）在 Grid 的范围内移动。
         self->shift_vector = shift_vector;
         self->type = ir_tensor->type->value_type;
         self->tag = "Accessor";
@@ -514,6 +555,7 @@ class Accessor : public Instruction {
    public:
     Eigen::MatrixXi64 transform_matrix;
     Eigen::VectorXi64 shift_vector;
+    //simd_size 和 simd_shuffle 表明 Accessor 支持 SIMD 访问，transform_matrix 可调整坐标以对齐 SIMD 边界。
     int64_t simd_size = 1;
     int64_t simd_shuffle = false;
 };
@@ -563,8 +605,13 @@ class Slice : public Tensor {
                                          Eigen::VectorXi64 shape) {
         std::shared_ptr<Slice> self(new Slice);
         GALOIS_ASSERT(ir_accessor_origin->Tensor()->IsContinous());
-        self->origin = ir_accessor_origin;
-        self->shape = shape;
+        self->origin = ir_accessor_origin;//保存原始张量的访问器，Slice 是对原始数据的引用。
+        self->shape = shape; //设置切片后的形状，例如从大矩阵中切出子块。
+
+        // 创建切片张量的类型：
+        // ir_accessor_origin->type：原始张量的数据类型（如 float32）。
+        // shape：切片后的形状。
+        // Layout::View：表示这是一个视图布局，不复制数据，仅调整访问方式。
         self->type = TensorType::Create(ir_accessor_origin->type, shape, Layout::View);
         self->tag = "Slice";
         return self;
@@ -685,10 +732,13 @@ class VectorBroadcast : public Instruction {
 
    public:
     /// TODO: 需要进一步处理
+
+    //输入张量（智能指针管理），表示要广播的向量
+    //通道 ID，可能指定广播的目标通道或维度。
     static std::shared_ptr<VectorBroadcast> Create(std::shared_ptr<ir::Tensor> ir_value,
                                                    int64_t lane_id) {
         std::shared_ptr<VectorBroadcast> self(new VectorBroadcast);
-        self->OperandResize(1);
+        self->OperandResize(1); //调整操作数列表的大小为 1。
         self->Vector(ir_value);
         self->lane_id = lane_id;
         self->type = ir_value->type;
@@ -700,7 +750,7 @@ class VectorBroadcast : public Instruction {
     void Vector(std::shared_ptr<ir::Tensor> ir_value) { this->SetOperand(0, ir_value); }
     // Eigen::VectorXi64 shape;
 
-    int64_t lane_id;
+    int64_t lane_id; //通道 ID，可能指定广播的目标通道或维度。
 };
 
 class Write : public Instruction {
@@ -789,6 +839,12 @@ class OperatorFunction : public Block {
         std::shared_ptr<OperatorType> ir_operator_type) {
         std::shared_ptr<OperatorFunction> self(new OperatorFunction);
         self->type = ir_operator_type;
+        
+        //std::transform 方法类似下面循环的作用是 遍历 ir_operator_type->in_types，将 TensorType 转换成 Tensor 并存入 self->inputs。
+        //std::transform + Lambda 让代码更简洁、现代化，符合 C++11 及以上的最佳实践。
+        // for (const auto& ir_type : ir_operator_type->in_types) {
+        //     self->inputs.push_back(Tensor::Create(ir_type));
+        // }
 
         std::transform(RANGE(ir_operator_type->in_types), std::back_inserter(self->inputs),
                        [](std::shared_ptr<TensorType> ir_type) { return Tensor::Create(ir_type); });
@@ -846,9 +902,12 @@ class BitCast : public Instruction {
    public:
     static std::shared_ptr<BitCast> Create(std::shared_ptr<Tensor> ir_value,
                                            std::shared_ptr<TensorType> ir_type) {
-        GALOIS_ASSERT(ir_type);
-        GALOIS_ASSERT(ir_value->IsContinous());
+        GALOIS_ASSERT(ir_type); //// 确保目标类型非空
+        GALOIS_ASSERT(ir_value->IsContinous()); //// 确保输入张量是连续存储的
         std::shared_ptr<BitCast> self(new BitCast);
+
+        //确保输入张量和目标类型的总字节数相等。
+        //例如，从 float32（4 字节）转换为 int32（4 字节）是合法的，但 float32 到 int64（8 字节）会失败。
         GALOIS_ASSERT(ir_value->type->bytes == ir_type->bytes);
         // auto ir_old_tensor_type = ir_value->type;
         // GALOIS_ASSERT(ir_old_tensor_type->Size() * ir_old_tensor_type->value_type->bytes
